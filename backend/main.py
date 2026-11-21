@@ -1,5 +1,5 @@
-
 # main.py - Ask My Notes Backend with AI Quiz Generator
+# Updated for Day 3 - Groq model update
 
 import os
 import json
@@ -10,12 +10,16 @@ from pydantic import BaseModel, Field
 from groq import Groq
 
 from ingest import collection, add_pdf
+from voice import router as voice_router
 
 
 # Read API key from .env
 load_dotenv()
 
 ai = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# Updated Groq model for Day 3
+MODEL = "openai/gpt-oss-120b"
 
 
 # Create FastAPI app
@@ -29,6 +33,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register the live voice assistant WebSocket (/voice)
+app.include_router(voice_router)
 
 
 # Request formats
@@ -54,16 +61,23 @@ def home():
 @app.post("/ask")
 def ask(q: Question):
 
-    # 1. Find relevant notes
+    # 1. Check if notes exist
+    if collection.count() == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No notes found. Please upload a PDF first."
+        )
+
+    # 2. Find relevant notes
     results = collection.query(
         query_texts=[q.question],
-        n_results=4
+        n_results=min(4, collection.count())
     )
 
     pieces = results["documents"][0]
     sources = results["metadatas"][0]
 
-    # 2. Prepare context
+    # 3. Prepare context
     notes = "\n\n".join(pieces)
 
     prompt = f"""Answer the question using ONLY these notes.
@@ -74,47 +88,65 @@ Notes:
 
 Question: {q.question}"""
 
-    # 3. Generate answer using Groq AI
-    reply = ai.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.2,
-    )
+    # 4. Generate answer using Groq AI
+    try:
+        reply = ai.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+        )
 
-    answer = reply.choices[0].message.content
+        answer = reply.choices[0].message.content
 
-    return {
-        "answer": answer,
-        "sources": sources
-    }
+        return {
+            "answer": answer,
+            "sources": sources
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Answer generation failed: {str(e)}"
+        )
 
 
 # POST - Upload a PDF
 @app.post("/upload")
 def upload(file: UploadFile):
 
-    if not file.filename.lower().endswith(".pdf"):
+    # 1. Check file type
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are allowed."
         )
 
+    # 2. Prepare filename and folder
     name = os.path.basename(file.filename)
 
     os.makedirs("docs", exist_ok=True)
 
     path = os.path.join("docs", name)
 
-    with open(path, "wb") as f:
-        f.write(file.file.read())
+    # 3. Save PDF
+    try:
+        with open(path, "wb") as f:
+            f.write(file.file.read())
 
-    count = add_pdf(path)
+        # 4. Process PDF
+        count = add_pdf(path)
 
-    return {
-        "message": f"Added {name} ({count} pieces). Ask me!"
-    }
+        return {
+            "message": f"Added {name} ({count} pieces). Ask me!"
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF processing failed: {str(e)}"
+        )
 
 
 # POST - Generate AI Quiz
@@ -187,7 +219,7 @@ Notes:
     # 4. Generate quiz using Groq
     try:
         reply = ai.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model=MODEL,
             messages=[
                 {"role": "user", "content": prompt}
             ],
@@ -196,7 +228,7 @@ Notes:
 
         content = reply.choices[0].message.content
 
-        # 5. Convert AI response into JSON
+        # 5. Clean AI response
         content = content.strip()
 
         if content.startswith("```"):
@@ -204,6 +236,7 @@ Notes:
             content = content.replace("```", "")
             content = content.strip()
 
+        # 6. Convert AI response into JSON
         quiz_data = json.loads(content)
 
         quiz = quiz_data.get("quiz", [])

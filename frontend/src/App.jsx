@@ -1,6 +1,7 @@
 
 import { useState } from "react";
 import "./App.css";
+import Voice from "./Voice";
 
 const API = "http://localhost:8000";
 
@@ -190,6 +191,14 @@ function App() {
           AI Quiz
         </button>
 
+        <button
+          className={`nav-item ${page === "voice" ? "active" : ""}`}
+          onClick={() => setPage("voice")}
+        >
+          <span className="nav-icon">🎙️</span>
+          Voice Assistant
+        </button>
+
         <div className="sidebar-bottom">
           <div className="sidebar-card">
             <div className="sidebar-card-icon">✧</div>
@@ -214,7 +223,7 @@ function App() {
         <header className="topbar">
           <div>
             <span className="topbar-label">YOUR LEARNING SPACE</span>
-            <h3>{page === "chat" ? "Ask My Notes" : "AI Quiz Generator"}</h3>
+            <h3>{page === "chat" ? "Ask My Notes" : page === "quiz" ? "AI Quiz Generator" : "Voice Assistant"}</h3>
           </div>
 
           <div className="topbar-badge">
@@ -472,6 +481,9 @@ function App() {
 
           </section>
         )}
+
+        {/* VOICE PAGE */}
+        {page === "voice" && <Voice />}
 
       </main>
     </div>
